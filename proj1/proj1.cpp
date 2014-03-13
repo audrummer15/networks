@@ -6,6 +6,10 @@
 
 using namespace std;
 
+/* PORTS ASSIGNED TO OUR GROUP
+        10034-10037
+*/
+
 void usage();
 vector<string> getUserInput(void);
 
