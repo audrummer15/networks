@@ -1,8 +1,18 @@
 #include <iostream>
-#include <string>
-#include <vector>
 #include <cstdlib>
+#include <string>
+#include <cstring> 
+#include <vector>
+#include <sstream>
+#include <fstream>
+
+#include <sys/types.h>
 #include <sys/socket.h>
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
+#include <stdint.h>
 
 using namespace std;
 
