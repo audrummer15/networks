@@ -13,21 +13,11 @@ using namespace std;
 		10034 - 10037 
 */
 
-char generateChecksum( char* data, int length ) {
-   char retVal = 0x00;
-
-   for( int i=0; i < length; i++ ) {
-       retVal += *(data + i);
-   }
-
-   retVal = ~retVal;
-
-   return retVal;
-}
+char generateChecksum( char* data, int length );
 
 int main()
 {
-	  struct sockaddr_in myaddr;      				/* our address */
+    struct sockaddr_in myaddr;      				/* our address */
     struct sockaddr_in remaddr;     				/* remote address */
     socklen_t addrlen = sizeof(remaddr);            /* length of addresses */
     int recvlen;                    				/* # bytes received */
@@ -75,4 +65,16 @@ int main()
             }
     }
     /* never exits */
+}
+
+char generateChecksum( char* data, int length ) {
+   char retVal = 0x00;
+
+   for( int i=0; i < length; i++ ) {
+       retVal += *(data + i);
+   }
+
+   retVal = ~retVal;
+
+   return retVal;
 }
