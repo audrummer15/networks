@@ -20,7 +20,7 @@ using namespace std;
 #define BUFSIZE 128
 
 /* PORTS ASSIGNED TO GROUP
-		10034 - 10037 
+	10034 - 10037 
 */
 
 char generateChecksum( char* data, int length );
@@ -33,6 +33,11 @@ int main()
     int recvlen;                    				/* # bytes received */
     int fd;                         				/* our socket */
     unsigned char buf[BUFSIZE];    					/* receive buffer */
+
+    // ACK and NAK constants
+    const char nak[1] = {0};
+    const char ack[1] = {1};
+    
 
     /* create a UDP socket */
 
@@ -53,26 +58,30 @@ int main()
             return 0;
     }
 
-    /* now loop, receiving data and printing what we received */
+    /* now loop, receiving data */
     for (;;) {
             recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
 
-            char data[BUFSIZE - 2];
-            for( int x = 2; x < BUFSIZE; x++)
-            {
-            	data[x - 2] = buf[x];
-            }
-
-            if ( generateChecksum(data, BUFSIZE - 2) != buf[1])
-            {
-            	//SEND NAK HERE
-            }
-
-            printf("received %d bytes\n", recvlen);
             if (recvlen > 0) {
-                    buf[recvlen] = 0;
-                    printf("received message: \"%s\"\n", buf);
+                char data[BUFSIZE - 2];
+                for( int x = 2; x < BUFSIZE; x++) {
+                	data[x - 2] = buf[x];
+                }
+
+                if ( generateChecksum(data, BUFSIZE - 2) != buf[1]) {
+                	sendto(fd, nak, strlen(nak), 0, (struct sockaddr *)&remaddr, addrlen);
+                }
+                else {
+                    sendto(fd, ack, strlen(ack), 0, (struct sockaddr *)&remaddr, addrlen);
+                }
             }
+
+            // EXAMPLE CODE  
+            // printf("received %d bytes\n", recvlen);
+            // if (recvlen > 0) {
+            //         buf[recvlen] = 0;
+            //         printf("received message: \"%s\"\n", buf);
+            // }
     }
     /* never exits */
 }
