@@ -15,20 +15,23 @@
 #include <stdint.h>
 
 #define BUFSIZE 128
+#define DATASIZE 126
+#define HEADERSIZE 2
 #define PORT 10035
 #define MAXLINE 1024
 
 using namespace std;
 
+typedef struct {
+    uint8_t Sequence;
+    char Checksum;
+    char Data[DATASIZE];
+} Packet;	
+
 void usage();
 char generateChecksum(char*, int);
 char* loadFileToBuffer();
-
-struct Packet {
-    uint8_t Sequence;
-    char Checksum;
-    char Data[126];
-} Packet;
+Packet* constructPacket(char*, int);
 
 int main(int argc, char *argv[])
 {
@@ -46,8 +49,9 @@ int main(int argc, char *argv[])
     float fLost = 0;
 
     //Sending variables
-    short iSequence = 0;
-    bool bSent = false;
+    uint8_t iSequence = 0;
+    Packet *pPacket;
+    bool bSent = false; //File has successfully sent
 
     //Other
     char* cFileBuffer = loadFileToBuffer();
@@ -56,8 +60,6 @@ int main(int argc, char *argv[])
         cerr << "Error reading file. Exiting..." << endl;
         return 0;
     }
-
-    cout << cFileBuffer[0] << " " << cFileBuffer[1] << " " << cFileBuffer[2] << endl;
 
     for(int i=1;i < argc; i+= 2)
     {
@@ -89,6 +91,7 @@ int main(int argc, char *argv[])
         }
     }
 
+    //Open socket
     if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
         cerr << "Unable to open socket. Exiting..." << endl;
         return 0;
@@ -104,7 +107,9 @@ int main(int argc, char *argv[])
         return 0;
     }
 
-    if (sendto(fd, "PUT TestFile", strlen("PUT TestFile"), 0, (struct sockaddr*)&serverAddress, slen) == -1) {
+    pPacket = constructPacket((char*)"zzzzzzzzzzzzzzzz", strlen("zzzzzzzzzzzzzzzz"));
+
+    if (sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr*)&serverAddress, slen) == -1) {
         cerr << "Problem sending data. Exiting..." << endl;
         return 0;
     }
@@ -119,6 +124,7 @@ int main(int argc, char *argv[])
         bSent = true;
     }
 
+	delete pPacket;
     return 0;
 }
 
@@ -154,9 +160,9 @@ char* loadFileToBuffer() {
         is.read (cBuff,length);
 
         if (is)
-          std::cout << "all characters read successfully.";
+          std::cout << "all characters read successfully.\n";
         else
-          std::cout << "error: only " << is.gcount() << " could be read";
+          std::cout << "error: only " << is.gcount() << " could be read\n";
 
         is.close();
 
@@ -165,3 +171,24 @@ char* loadFileToBuffer() {
 
     return NULL;
 }
+
+Packet* constructPacket(char* data, int length) {
+	Packet* pPacket = new Packet;
+	static uint8_t sequenceNum = 0;
+
+	pPacket->Sequence = sequenceNum;
+
+	sequenceNum = 1 - sequenceNum;
+
+	for( int i=0; i < DATASIZE; i++ ) {
+		if( i < length )
+			pPacket->Data[i] = data[i];
+		else
+			pPacket->Data[i] = '\0';
+	}
+
+	pPacket->Checksum = generateChecksum((char*)pPacket->Data, DATASIZE);
+
+	return pPacket;
+}
+

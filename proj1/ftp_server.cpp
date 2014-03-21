@@ -63,16 +63,23 @@ int main()
             recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
 
             if (recvlen > 0) {
+
+		//Add data to buffer (minus two byte header)
                 char data[BUFSIZE - 2];
                 for( int x = 2; x < BUFSIZE; x++) {
                 	data[x - 2] = buf[x];
+					cout << buf[x];
                 }
+				cout << endl;
 
+		//Make checksum
                 if ( generateChecksum(data, BUFSIZE - 2) != buf[1]) {
+					cout << "Checksum invalid - NAK\n";
                 	sendto(fd, nak, strlen(nak), 0, (struct sockaddr *)&remaddr, addrlen);
                 }
                 else {
-                    sendto(fd, ack, strlen(ack), 0, (struct sockaddr *)&remaddr, addrlen);
+			cout << "Checksum valid - ACK\n";	
+                	sendto(fd, ack, strlen(ack), 0, (struct sockaddr *)&remaddr, addrlen);
                 }
             }
 
