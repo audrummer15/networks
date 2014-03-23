@@ -18,10 +18,19 @@ using namespace std;
 
 #define PORT 10035
 #define BUFSIZE 128
+#define DATASIZE 126
+#define HEADERSIZE 2
+#define MAXLINE 1024
 
 /* PORTS ASSIGNED TO GROUP
 	10034 - 10037 
 */
+
+typedef struct {
+    uint8_t Sequence;
+    unsigned char Checksum;
+    char Data[DATASIZE];
+} Packet;
 
 // GLOBAL DATA
 struct sockaddr_in myaddr;      		/* our address */
@@ -30,14 +39,16 @@ socklen_t addrlen = sizeof(remaddr);        /* length of addresses */
 int recvlen;                    		/* # bytes received */
 int fd;                         		/* our socket */
 unsigned char buf[BUFSIZE];    		/* receive buffer */
-int seqnum;
-char data[BUFSIZE - 2];
+uint8_t seqnum;
+char data[BUFSIZE - HEADERSIZE];
 
 // ACK and NAK constants
 const char nak[1] = {0};
 const char ack[1] = {1};
 
-char generateChecksum( char* data, int length );
+Packet* pPacket = new Packet;
+
+unsigned char generateChecksum( Packet*); 
 void receiveData();
 
 int main()
@@ -61,38 +72,41 @@ int main()
             perror("bind failed");
             return 0;
     }
+	
+	cout<<"\n- Reliable FTP Application -\n";
+	cout<<"Waiting on port: "<< PORT << "\n";
 
     /* now loop, receiving data */
     for (;;) {
-			cout<<"\n- Reliable FTP Application -\n";
-			cout<<"Waiting on port: "<< PORT << "\n";
             recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
+
+	    memcpy(pPacket, buf, BUFSIZE);
 
             if (recvlen > 0) {
 
 		//Add data to buffer (minus two byte header)
-                for( int x = 2; x < recvlen; x++) {
-                	data[x - 2] = buf[x];
+                for( int x = HEADERSIZE; x < recvlen; x++) {
+                	data[x - HEADERSIZE] = buf[x];
 					cout << buf[x];
                 }
 				cout << endl;
-
+	
 		//Make checksum
-                if ( generateChecksum(data, BUFSIZE - 2) != buf[1]) {
+                if ( generateChecksum(pPacket) != buf[1]) {
 					cout << "Checksum invalid - NAK\n";
                 	sendto(fd, nak, strlen(nak), 0, (struct sockaddr *)&remaddr, addrlen);
                 }
                 else {
 					string command(data);
-					if ( command.substr(0,2) == "PUT" ) {
+					if ( command.substr(0,3) == "PUT" ) {
 						cout << "Checksum valid - ACK\n";
-						seqnum = buf[0];
+						seqnum = pPacket->Sequence;
                 		sendto(fd, ack, strlen(ack), 0, (struct sockaddr *)&remaddr, addrlen);
 						receiveData();
 					}
 					else {
 						cout << "Not a PUT command - NAK\n";
-				        		sendto(fd, nak, strlen(nak), 0, (struct sockaddr *)&remaddr, addrlen);
+				        sendto(fd, nak, strlen(nak), 0, (struct sockaddr *)&remaddr, addrlen);
 					}
 				}
 			}
@@ -101,16 +115,19 @@ int main()
     /* never exits */
 }
 
-char generateChecksum( char* data, int length ) {
-   char retVal = 0x00;
 
-   for( int i=0; i < length; i++ ) {
-       retVal += *(data + i);
-   }
+unsigned char generateChecksum( Packet* pPacket ) {
+    unsigned char retVal = 0x00;
 
-   retVal = ~retVal;
+    retVal = pPacket->Sequence;
 
-   return retVal;
+    for( int i=0; i < DATASIZE; i++ ) {
+        retVal += pPacket->Data[i];
+    }
+
+    retVal = ~retVal;
+
+    return retVal;
 }
 
 void receiveData() {
@@ -119,29 +136,38 @@ void receiveData() {
 	
 	recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
 	
+	memcpy(pPacket, buf, BUFSIZE);
+	
 	while ( recvlen > 1 ) {
 		//Make checksum
-		if ( generateChecksum(data, BUFSIZE - 2) != buf[1]) {
+		if ( generateChecksum(pPacket) != buf[1]) {
 			cout << "Checksum invalid - NAK - Sequence Num: " << buf[0] << "\n";
 			sendto(fd, nak, strlen(nak), 0, (struct sockaddr *)&remaddr, addrlen);
 		}
 		else {
-			cout << "ACK - Seq Num: " << buf[0] << "\n";
+			cout << "ACK - Seq Num: " << (int)buf[0] << "\n";
 			sendto(fd, ack, strlen(ack), 0, (struct sockaddr *)&remaddr, addrlen);
 			//Add data to buffer (minus two byte header)
-			for( int x = 2; x < recvlen; x++) {
-				data[x - 2] = buf[x];
+			for( int x = HEADERSIZE; x < recvlen; x++) {
+				data[x - HEADERSIZE] = buf[x];
 				if ( x < 50 ) {
 					cout << buf[x];
 				}
 			}
+
 			cout << endl;
 			string buffer(data);
-			if ( seqnum != buf[0] ) {
-				seqnum = buf[0];
+
+			if ( seqnum != pPacket->Sequence ) {
+				seqnum = pPacket->Sequence;
 				outFile << buffer;
 			}
 		}
+
+		recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
+		memcpy(pPacket, buf, BUFSIZE);
 	}
+
+	sendto(fd, ack, strlen(ack), 0, (struct sockaddr *)&remaddr, addrlen);
 	outFile.close();
 }
