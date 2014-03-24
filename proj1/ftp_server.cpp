@@ -94,7 +94,7 @@ int main()
 		//Make checksum
                 if ( generateChecksum(pPacket) != buf[1]) {
 					cout << "Checksum invalid - NAK\n";
-					nak[1] = (char)pPacket->Sequence ^ 30;
+					nak[1] = seqnum;
                 	sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
                 }
                 else {
@@ -102,7 +102,7 @@ int main()
 					if ( command.substr(0,3) == "PUT" ) {
 						cout << "Checksum valid - ACK\n";
 						seqnum = pPacket->Sequence;
-						ack[1] = (char)pPacket->Sequence ^ 30;
+						ack[1] = seqnum;
                 		sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 						receiveData();
 						cout << "PUT command success." << endl;
@@ -145,13 +145,13 @@ void receiveData() {
 	while ( recvlen > 1 ) {
 		//Make checksum
 		if ( generateChecksum(pPacket) != buf[1]) {
-			cout << "Checksum invalid - NAK - Sequence Num: " << (int)buf[0] << "\n";
-			nak[1] = (char)pPacket->Sequence ^ 30;
+			cout << "Checksum invalid - NAK - Sequence Num: " << (int)seqnum << "\n";
+			nak[1] = seqnum;
 			sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 		}
 		else {
-			cout << "ACK - Seq Num: " << (int)buf[0] << "\n";
-			ack[1] = (char)pPacket->Sequence ^ 30;
+			cout << "ACK - Seq Num: " << (int)seqnum << "\n";
+			ack[1] = seqnum;
 			sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 			//Add data to buffer (minus two byte header)
 			for( int x = HEADERSIZE; x < recvlen; x++) {
@@ -174,7 +174,7 @@ void receiveData() {
 		memcpy(pPacket, buf, BUFSIZE);
 	}
 
-	ack[1] = (char)pPacket->Sequence ^ 30;
+	ack[1] = seqnum;
 	sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 	outFile.close();
 }
