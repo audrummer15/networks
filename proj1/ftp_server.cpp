@@ -43,8 +43,8 @@ uint8_t seqnum;
 char data[BUFSIZE - HEADERSIZE];
 
 // ACK and NAK constants
-const char nak[1] = {0};
-const char ack[1] = {1};
+char nak[2] = {'0', '0'};
+char ack[2] = {'1', '0'};
 
 Packet* pPacket = new Packet;
 
@@ -78,7 +78,7 @@ int main()
 
     /* now loop, receiving data */
     for (;;) {
-            recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
+        recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
 
 	    memcpy(pPacket, buf, BUFSIZE);
 
@@ -94,19 +94,23 @@ int main()
 		//Make checksum
                 if ( generateChecksum(pPacket) != buf[1]) {
 					cout << "Checksum invalid - NAK\n";
-                	sendto(fd, nak, strlen(nak), 0, (struct sockaddr *)&remaddr, addrlen);
+					nak[1] = (char)pPacket->Sequence ^ 30;
+                	sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
                 }
                 else {
 					string command(data);
 					if ( command.substr(0,3) == "PUT" ) {
 						cout << "Checksum valid - ACK\n";
 						seqnum = pPacket->Sequence;
-                		sendto(fd, ack, strlen(ack), 0, (struct sockaddr *)&remaddr, addrlen);
+						ack[1] = (char)pPacket->Sequence ^ 30;
+                		sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 						receiveData();
+						cout << "PUT command success." << endl;
 					}
 					else {
 						cout << "Not a PUT command - NAK\n";
-				        sendto(fd, nak, strlen(nak), 0, (struct sockaddr *)&remaddr, addrlen);
+						nak[1] = (char)pPacket->Sequence ^ 30;
+				        sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 					}
 				}
 			}
@@ -141,12 +145,14 @@ void receiveData() {
 	while ( recvlen > 1 ) {
 		//Make checksum
 		if ( generateChecksum(pPacket) != buf[1]) {
-			cout << "Checksum invalid - NAK - Sequence Num: " << buf[0] << "\n";
-			sendto(fd, nak, strlen(nak), 0, (struct sockaddr *)&remaddr, addrlen);
+			cout << "Checksum invalid - NAK - Sequence Num: " << (int)buf[0] << "\n";
+			nak[1] = (char)pPacket->Sequence ^ 30;
+			sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 		}
 		else {
 			cout << "ACK - Seq Num: " << (int)buf[0] << "\n";
-			sendto(fd, ack, strlen(ack), 0, (struct sockaddr *)&remaddr, addrlen);
+			ack[1] = (char)pPacket->Sequence ^ 30;
+			sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 			//Add data to buffer (minus two byte header)
 			for( int x = HEADERSIZE; x < recvlen; x++) {
 				data[x - HEADERSIZE] = buf[x];
@@ -168,6 +174,7 @@ void receiveData() {
 		memcpy(pPacket, buf, BUFSIZE);
 	}
 
-	sendto(fd, ack, strlen(ack), 0, (struct sockaddr *)&remaddr, addrlen);
+	ack[1] = (char)pPacket->Sequence ^ 30;
+	sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 	outFile.close();
 }
