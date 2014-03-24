@@ -31,10 +31,10 @@ typedef struct {
 
 void usage();
 char generateChecksum(char*, int);
-char gremlin(float, float, Packet*);
+bool gremlin(float, float, Packet*);
 char* loadFileToBuffer();
 Packet* constructPacket(char*, int);
-bool sendPacket(const Packet*, char); 
+bool sendPacket(const Packet*, bool); 
 
 int fd;
 int slen;
@@ -54,8 +54,12 @@ int main(int argc, char *argv[])
     float fDamaged = 0;
     float fLost = 0;
 
+	bool bSent = false;
+	bool bGremlin = false;
+
     //Sending variables
     Packet *pPacket;
+	Packet *pTemp = new Packet;
 
     for(int i=1;i < argc; i+= 2)
     {
@@ -125,9 +129,13 @@ int main(int argc, char *argv[])
 		{
 			
 			//Now we send a 1 packet overhead for the filename
+			
+			bSent = false;
 			pPacket = constructPacket((char*)"PUT TestFile", strlen("PUT TestFile"));
-			gremlin(fDamaged, fLost, pPacket);
-			while(!sendPacket(pPacket, gremlin(fDamaged, fLost, pPacket))) {
+			while(!bSent ) {
+				memcpy(pTemp, pPacket, sizeof( Packet ));
+				bGremlin = gremlin(fDamaged, fLost, pTemp);
+				bSent = sendPacket(pTemp, bGremlin);
 				cout << "Sending put..." << endl;
 			}	
 			
@@ -144,15 +152,16 @@ int main(int argc, char *argv[])
 					if(!putfile.eof())
 					{
 						buff[i] = putfile.get();
-						//csum += buff[i]; 
 					}
 					else
 					{
+						if( i != 0 )
+							buff[i-1]= '\0';
 						buff[i] = '\0';
 					}
 				}
 
-				pPacket = constructPacket(buff, strlen(buff));
+				
 
 				/*************************************************/
 				// This part of the code looks at the input      //
@@ -162,7 +171,12 @@ int main(int argc, char *argv[])
 				/*************************************************/
 
 				//Send
-				while(!sendPacket(pPacket, gremlin(fDamaged, fLost, pPacket))) { 
+				bSent = false;
+				pPacket = constructPacket(buff, strlen(buff));
+				while( !bSent ) {
+					memcpy(pTemp, pPacket, sizeof( Packet ));
+					bGremlin = gremlin(fDamaged, fLost, pTemp);
+					bSent = sendPacket(pTemp, bGremlin); 
 					cout << "sending packet..." << endl;
 				}
 				
@@ -185,11 +199,11 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-char gremlin(float fDamaged, float fLost, Packet* ppacket)
+bool gremlin(float fDamaged, float fLost, Packet* ppacket)
 {
 	if(fLost > (1.0 * rand()) / (1.0 * RAND_MAX))
 	{
-		return 0xFF;
+		return true;
 	}
 
 	if(fDamaged > (1.0 * rand()) / (1.0 * RAND_MAX))
@@ -285,7 +299,7 @@ char gremlin(float fDamaged, float fLost, Packet* ppacket)
 		}
 
 	}
-	return 0x00;
+	return false;
 }
 
 void usage() {
@@ -304,34 +318,6 @@ unsigned char generateChecksum( Packet* pPacket ) {
     retVal = ~retVal;
 
     return retVal;
-}
-
-char* loadFileToBuffer() {
-    std::ifstream is ("TestFile", std::ifstream::binary);
-
-    if (is) {
-        // get length of file:
-        is.seekg (0, is.end);
-        int length = is.tellg();
-        is.seekg (0, is.beg);
-
-        char* cBuff = new char[length];
-
-        std::cout << "Reading " << length << " characters... ";
-        // read data as a block:
-        is.read (cBuff,length);
-
-        if (is)
-          std::cout << "all characters read successfully.\n";
-        else
-          std::cout << "error: only " << is.gcount() << " could be read\n";
-
-        is.close();
-
-        return cBuff;
-    }
-
-    return NULL;
 }
 
 Packet* constructPacket(char* data, int length) {
@@ -355,46 +341,51 @@ Packet* constructPacket(char* data, int length) {
 }
 
 
-bool sendPacket(const Packet* pPacket, char lost) {
+bool sendPacket(const Packet* pPacket, bool bLost) {
     bool bReturn = false;
 
-    //Send packet
-  if(lost != 0xFF)
-  {
-    if (sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr*)&serverAddress, slen) == -1) {
-        cerr << "Problem sending packet with sequence #" << pPacket->Sequence << "..." << endl;
-        bReturn = false;
-    } else {
-        int recvPollVal = 0;
-        int iLength = 0;
-        struct pollfd ufds;
-        unsigned char recvline[MAXLINE + 1];
-        time_t timer;
+	//Send packet
+	if(!bLost)
+	{
+		if (sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr*)&serverAddress, slen) == -1) {
+			cerr << "Problem sending packet with sequence #" << pPacket->Sequence << "..." << endl;
+			bReturn = false;
+		} 
+	}
 
-        //Wait on return
-        ufds.fd = fd;
-        ufds.events = POLLIN;
-        recvPollVal = poll(&ufds, 1, 20);
 
-        if( recvPollVal == -1 ) {            //If error occurs
-            cerr << "Error polling socket..." << endl;
-            bReturn = false;
-        } else if( recvPollVal == 0 ) {        //If timeout occurs
-            cerr << "Poll Timeout!..." << endl;
-            bReturn = false;
-        } else {
-            iLength = recvfrom(fd, recvline, MAXLINE, 0, (struct sockaddr*)&serverAddress, &slt);
-       
-            if( recvline[0] == 1) {          //If ACK Received, return true
-                bReturn = true;
-            } else if( recvline[0] == 0 ) {     //Else if NAK, return false
-                bReturn = false;
-            } else {                             //Else bad stuff, return false
-                bReturn = false;
-            }
-        }
-    }
-  }
-    return bReturn;
+	int recvPollVal = 0;
+	int iLength = 0;
+	struct pollfd ufds;
+	unsigned char recvline[MAXLINE + 1];
+	time_t timer;
+
+	//Wait on return
+	ufds.fd = fd;
+	ufds.events = POLLIN;
+	recvPollVal = poll(&ufds, 1, 20);
+
+	if( recvPollVal == -1 ) {            //If error occurs
+		cerr << "Error polling socket..." << endl;
+		bReturn = false;
+	} else if( recvPollVal == 0 ) {        //If timeout occurs
+		cerr << "Poll Timeout!..." << endl;
+		bReturn = false;
+	} else {
+		iLength = recvfrom(fd, recvline, MAXLINE, 0, (struct sockaddr*)&serverAddress, &slt);
+
+		if( recvline[0] == '1') {          //If ACK Received, return true
+			cout << "ACK - " << (int)recvline[1] - 30 << endl;
+			//cout << pPacket->Data << endl;
+		    bReturn = true;
+		} else if( recvline[0] == '0' ) {     //Else if NAK, return false
+			cout << "NAK - " << (int)recvline[1] - 30 << endl;
+		    bReturn = false;
+		} else {                             //Else bad stuff, return false
+		    bReturn = false;
+		}
+	}
+  
+	return bReturn;
 }
 
