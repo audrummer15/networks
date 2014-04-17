@@ -105,7 +105,7 @@ int main()
 						ack[1] = seqnum;
                 		sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 						receiveData();
-						cout << "PUT command success." << endl;
+						cout << "PUT successfully completed" << endl;
 					}
 					else {
 						cout << "Not a PUT command - NAK\n";
@@ -178,3 +178,4 @@ void receiveData() {
 	sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 	outFile.close();
 }
+
