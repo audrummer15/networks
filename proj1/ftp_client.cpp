@@ -8,6 +8,7 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+<<<<<<< HEAD
 #include <sys/poll.h>
 
 #include <arpa/inet.h>
@@ -35,11 +36,41 @@ bool gremlin(float, float, Packet*);
 char* loadFileToBuffer();
 Packet* constructPacket(char*, int);
 bool sendPacket(const Packet*, bool); 
+=======
+#include <sys/poll.h>
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
+#include <stdint.h>
+
+#define BUFSIZE 128
+#define DATASIZE 126
+#define HEADERSIZE 2
+#define PORT 10035
+#define MAXLINE 1024
+
+using namespace std;
+
+typedef struct {
+    uint8_t Sequence;
+    unsigned char Checksum;
+    char Data[DATASIZE];
+} Packet;	
+
+void usage();
+char generateChecksum(char*, int);
+bool gremlin(float, float, Packet*);
+char* loadFileToBuffer();
+Packet* constructPacket(char*, int);
+bool sendPacket(const Packet*, bool); 
+>>>>>>> a205ad954902a6c60cb6a9961b107602c3ba400c
 
 int fd;
 int slen;
 socklen_t slt;
 struct sockaddr_in serverAddress; 
+<<<<<<< HEAD
 
 int main(int argc, char *argv[])
 {
@@ -109,6 +140,77 @@ int main(int argc, char *argv[])
 		{
 			cerr << "There was a problem with the server IP address. Exiting..." << endl;
 			return 0;
+=======
+
+int main(int argc, char *argv[])
+{
+    //Socket variables
+    struct hostent *hp;
+    unsigned char buf[BUFSIZE];
+    slen = sizeof(serverAddress);
+    slt = sizeof(serverAddress);
+
+    //Command line arguments
+    string sServerAddress;
+    float fDamaged = 0;
+    float fLost = 0;
+
+	bool bSent = false;
+	bool bGremlin = false;
+
+    //Sending variables
+    Packet *pPacket;
+	Packet *pTemp = new Packet;
+
+    for(int i=1;i < argc; i+= 2)
+    {
+        switch (argv[i] [1])
+        {
+            case 'd':
+            {
+                fDamaged = atof(argv[i+1]);
+            };
+            break;
+
+            case 'l':
+            {
+                fLost = atof(argv[i+1]);
+            };
+            break;
+
+            case 's':
+            {
+                sServerAddress = argv[i+1];
+            };
+            break;
+
+            case 'h':
+            {
+                usage();
+                return 0;
+            }
+        }
+    }
+
+    //Loop forever
+    string ln;
+    for(;;)
+    {
+		//Open socket
+		if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+			cerr << "Unable to open socket. Exiting..." << endl;
+			return 0;
+		}
+
+		bzero(&serverAddress, sizeof(serverAddress));
+		serverAddress.sin_family = AF_INET;
+		serverAddress.sin_port = htons(PORT);
+
+		if (inet_aton(sServerAddress.c_str(), &serverAddress.sin_addr)==0)
+		{
+			cerr << "There was a problem with the server IP address. Exiting..." << endl;
+			return 0;
+>>>>>>> a205ad954902a6c60cb6a9961b107602c3ba400c
 		}
 
 		cout << "Type command or quit to quit: ";
@@ -199,9 +301,15 @@ int main(int argc, char *argv[])
 		}
 		close(fd);
     }
+<<<<<<< HEAD
 
     return 0;
 }
+=======
+
+    return 0;
+}
+>>>>>>> a205ad954902a6c60cb6a9961b107602c3ba400c
 
 bool gremlin(float fDamaged, float fLost, Packet* ppacket)
 {
@@ -209,6 +317,100 @@ bool gremlin(float fDamaged, float fLost, Packet* ppacket)
 	{
 		return true;
 	}
+<<<<<<< HEAD
+
+	if(fDamaged > (1.0 * rand()) / (1.0 * RAND_MAX))
+	{
+		int numDamaged = rand() % 10;
+		int byteNum = rand() % BUFSIZE;
+		if(numDamaged == 9)
+		{
+			if(numDamaged > 1)
+			{
+				ppacket->Data[numDamaged-HEADERSIZE]+= 8;	
+			}
+			else if(numDamaged == 1)
+			{
+				ppacket->Checksum+= 8;
+			}
+			else
+			{
+				ppacket->Sequence+= 8;
+			}
+			
+			numDamaged = rand() % 10;
+			if(numDamaged > 1)
+			{
+				ppacket->Data[numDamaged-HEADERSIZE]+= 4;	
+			}
+			else if(numDamaged == 1)
+			{
+				ppacket->Checksum+= 4;
+			}
+			else
+			{
+				ppacket->Sequence+= 4;
+			}
+
+			numDamaged = rand() % 10;
+			if(numDamaged > 1)
+			{
+				ppacket->Data[numDamaged-HEADERSIZE]+= 2;	
+			}
+			else if(numDamaged == 1)
+			{
+				ppacket->Checksum+= 2;
+			}
+			else
+			{
+				ppacket->Sequence+= 2;
+			}
+		}
+		else if(numDamaged > 6)
+		{
+			if(numDamaged > 1)
+			{
+				ppacket->Data[numDamaged-HEADERSIZE]+= 8;	
+			}
+			else if(numDamaged == 1)
+			{
+				ppacket->Checksum+= 8;
+			}
+			else
+			{
+				ppacket->Sequence+= 8;
+			}
+
+			numDamaged = rand() % 10;
+			if(numDamaged > 1)
+			{
+				ppacket->Data[numDamaged-HEADERSIZE]+= 4;	
+			}
+			else if(numDamaged == 1)
+			{
+				ppacket->Checksum+= 4;
+			}
+			else
+			{
+				ppacket->Sequence+= 4;
+			}
+		}
+		else
+		{
+			if(numDamaged > 1)
+			{
+				ppacket->Data[numDamaged-HEADERSIZE]+=8;	
+			}
+			else if(numDamaged == 1)
+			{
+				ppacket->Checksum+=4;
+			}
+			else
+			{
+				ppacket->Sequence+= 2;
+			}
+		}
+=======
 
 	if(fDamaged > (1.0 * rand()) / (1.0 * RAND_MAX))
 	{
@@ -305,11 +507,20 @@ bool gremlin(float fDamaged, float fLost, Packet* ppacket)
 	}
 	return false;
 }
+>>>>>>> a205ad954902a6c60cb6a9961b107602c3ba400c
+
+	}
+	return false;
+}
+<<<<<<< HEAD
 
 void usage() {
     cout << "Use the following syntax: \nproject1 -l <lost packets> -d <damaged packets>" << endl;
 }
 
+=======
+
+>>>>>>> a205ad954902a6c60cb6a9961b107602c3ba400c
 unsigned char generateChecksum( Packet* pPacket ) {
     unsigned char retVal = 0x00;
 
@@ -322,8 +533,13 @@ unsigned char generateChecksum( Packet* pPacket ) {
     retVal = ~retVal;
 
     return retVal;
+<<<<<<< HEAD
 }
 
+=======
+}
+
+>>>>>>> a205ad954902a6c60cb6a9961b107602c3ba400c
 Packet* constructPacket(char* data, int length) {
     Packet* pPacket = new Packet;
     static uint8_t sequenceNum = 0;
