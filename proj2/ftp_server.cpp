@@ -22,6 +22,8 @@ using namespace std;
 #define DATASIZE 510
 #define HEADERSIZE 2
 #define MAXLINE 1024
+#define WINDOWSIZE 16
+#define SEQMODULO 32
 
 /* PORTS ASSIGNED TO GROUP
 	10034 - 10037 
@@ -42,13 +44,10 @@ int fd;                         		/* our socket */
 unsigned char buf[BUFSIZE];    		/* receive buffer */
 uint8_t seqnum;
 char data[BUFSIZE - HEADERSIZE];
-
-// ACK and NAK constants
-char nak[2] = {'0', '0'};
-char ack[2] = {'1', '0'};
+uint8_t lastACK = 0;
+uint8_t sequenceNum = 0;
 
 unsigned char generateChecksum( Packet*); 
-void receiveData();
 void sendFile(const char*);
 bool sendPacket(const Packet*, bool);
 Packet* constructPacket(char*, int);
@@ -82,9 +81,7 @@ int main()
 	while(1) {
 		recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
 
-		if( recvlen == sizeof(ack) ) {
-			//ack or nak
-		} else if(recvlen == BUFSIZE) {
+		if(recvlen == BUFSIZE) {
 			Packet* pPacket = new Packet;
 			memcpy(pPacket, buf, BUFSIZE);
 
@@ -99,20 +96,20 @@ int main()
 
 			//Make checksum
 			if ( generateChecksum(pPacket) != buf[1]) {
-				cout << "Checksum invalid - NAK >> " << command << "\n";
-				nak[1] = seqnum;
+				//cout << "Checksum invalid - NAK >> " << command << "\n";
+				//nak[1] = seqnum;
 				//sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 			} else {
 				if ( command.substr(0,3) == "GET" || command.substr(0,3) == "get" ) {
-					cout << "Checksum valid - ACK\n";
+					//cout << "Checksum valid - ACK\n";
 					seqnum = pPacket->Sequence;
-					ack[1] = seqnum;
+					//ack[1] = seqnum;
 					//sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 					sendFile(command.substr(4, command.length()).c_str());
 					cout << "GET successfully completed" << endl;
 				} else {
-					cout << "Not a GET command - NAK\n";
-					nak[1] = (char)pPacket->Sequence ^ 30;
+					//cout << "Not a GET command - NAK\n";
+					//nak[1] = (char)pPacket->Sequence ^ 30;
 					//sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 				}
 			}
@@ -137,61 +134,13 @@ unsigned char generateChecksum( Packet* pPacket ) {
 	return retVal;
 }
 
-void receiveData() {
-	ofstream outFile;
-	Packet* pPacket = new Packet;
-	outFile.open("TestFile.txt",fstream::out | fstream::trunc);
-	
-	recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
-	
-	memcpy(pPacket, buf, BUFSIZE);
-	
-	while ( recvlen > 1 ) {
-		//Make checksum
-		if ( generateChecksum(pPacket) != buf[1]) {
-			cout << "Checksum invalid - NAK - Sequence Num: " << (int)seqnum << "\n";
-			nak[1] = seqnum;
-			sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
-		}
-		else {
-			cout << "ACK - Seq Num: " << (int)seqnum << "\n";
-			ack[1] = seqnum;
-			sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
-			//Add data to buffer (minus two byte header)
-			for( int x = HEADERSIZE; x < recvlen; x++) {
-				data[x - HEADERSIZE] = buf[x];
-				if ( x < 50 ) {
-					cout << buf[x];
-				}
-			}
-
-			cout << endl;
-			string buffer(data);
-
-			if ( seqnum != pPacket->Sequence ) {
-				seqnum = pPacket->Sequence;
-				outFile << buffer;
-			}
-		}
-
-		recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
-		memcpy(pPacket, buf, BUFSIZE);
-	}
-
-	ack[1] = seqnum;
-	sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
-	outFile.close();
-	delete pPacket;
-}
-
 Packet* constructPacket(char* data, int length) {
 	Packet* pPacket = new Packet;
-	static uint8_t sequenceNum = 0;
+	//static uint8_t sequenceNum = 0; moved to global AMB
 
 	pPacket->Sequence = sequenceNum;
 
-	sequenceNum = 1 - sequenceNum;
-	cout << "Seq: " << (int)sequenceNum << endl;
+	sequenceNum = (sequenceNum + 1) % SEQMODULO;
 
 	for( int i=0; i < DATASIZE; i++ ) {
 		if( i < length )
@@ -205,9 +154,8 @@ Packet* constructPacket(char* data, int length) {
 	return pPacket;
 }
 
-
 bool sendPacket(const Packet* pPacket, bool bLost) {
-    bool bReturn = false;
+	bool bReturn = false;
 
 	//Send packet
 	if(!bLost)
@@ -215,39 +163,8 @@ bool sendPacket(const Packet* pPacket, bool bLost) {
 		if (sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr*)&remaddr, addrlen) == -1) {
 			cerr << "Problem sending packet with sequence #" << pPacket->Sequence << "..." << endl;
 			bReturn = false;
-		} 
-	}
-
-
-	int recvPollVal = 0;
-	int iLength = 0;
-	struct pollfd ufds;
-	unsigned char recvline[MAXLINE + 1];
-	time_t timer;
-
-	//Wait on return
-	ufds.fd = fd;
-	ufds.events = POLLIN;
-	recvPollVal = poll(&ufds, 1, 20);
-
-	if( recvPollVal == -1 ) {            //If error occurs
-		cerr << "Error polling socket..." << endl;
-		bReturn = false;
-	} else if( recvPollVal == 0 ) {        //If timeout occurs
-		cerr << "Timeout... Lost Packet, Sequence Number - "  << (int)pPacket->Sequence << endl;
-		bReturn = false;
-	} else {
-		iLength = recvfrom(fd, recvline, MAXLINE, 0, (struct sockaddr*)&remaddr, &addrlen);
-
-		if( recvline[0] == '1') {          //If ACK Received, return true
-			cout << "ACK - " << (int)recvline[1] << endl;
-			//cout << pPacket->Data << endl;
+		} else {
 			bReturn = true;
-		} else if( recvline[0] == '0' ) {     //Else if NAK, return false
-			cout << "NAK - " << (int)recvline[1] << endl;
-			bReturn = false;
-		} else {                             //Else bad stuff, return false
-			bReturn = false;
 		}
 	}
   
@@ -261,8 +178,16 @@ void sendFile(const char* getFile) {
 	unsigned char lost = 0x00;
 	char buff[DATASIZE];
 	bool bSent = false, bGremlin = false;
-	Packet *pPacket = new Packet;
-	Packet *pTemp = new Packet;
+	Packet *pPackets[WINDOWSIZE];
+	Packet *pTemps[WINDOWSIZE];
+	bool bEOF = false;
+	int iLastPacket = WINDOWSIZE - 1;
+
+	//Initialize packet set
+	for( int i=0; i < WINDOWSIZE; i++ ) {
+		pPackets[i] = new Packet;
+		pTemps[i] = new Packet;
+	}
 
 	if(iFile.is_open())
 	{  
@@ -270,50 +195,65 @@ void sendFile(const char* getFile) {
 		while(!iFile.eof())
 		{
 
-			/************************************************/
-			// This part of the code reads in from the      //
-			// open file and fills up the data part of      //
-			// the packet. It also calculates the checksum. //
-			/************************************************/
-			for(int i = 0; i < DATASIZE; i++)
-			{
-				if(!iFile.eof())
+			for( int k=0; k < WINDOWSIZE; k++ ) {
+
+				/************************************************/
+				// This part of the code reads in from the      //
+				// open file and fills up the data part of      //
+				// the packet. It also calculates the checksum. //
+				/************************************************/
+				for(int i = 0; i < DATASIZE; i++)
 				{
-					buff[i] = iFile.get();
-					
-					if( i < 48 ) {
-						cout << buff[i];
+					if(!iFile.eof())
+					{
+						buff[i] = iFile.get();
+						
+						if( i < 48 ) {
+							cout << buff[i];
+						}
+					}
+					else
+					{
+						if( i != 0 ) {
+							buff[i-1]= '\0';
+						}
+						buff[i] = '\0';
+						bEOF = true;
 					}
 				}
-				else
-				{
-					if( i != 0 ) {
-						buff[i-1]= '\0';
-					}
-					buff[i] = '\0';
+
+				cout << endl;
+
+
+				/*************************************************/
+				// This part of the code looks at the input      //
+				// parameters and determines if a packet should  //
+				// be simulated lost or damaged. This is also    //
+				// known as the GREMLIN function         //
+				/*************************************************/
+
+				//Send
+				bSent = false;
+				pPackets[k] = constructPacket(buff, strlen(buff));
+
+				if( bEOF ) {
+					//Mark the last packet in window size to send so we aren't sending empty packets
+					// in the next loop.
+					iLastPacket = k;
+					break;
 				}
 			}
 
-			cout << endl;
-
-
-			/*************************************************/
-			// This part of the code looks at the input      //
-			// parameters and determines if a packet should  //
-			// be simulated lost or damaged. This is also    //
-			// known as the GREMLIN function         //
-			/*************************************************/
-
-			//Send
-			bSent = false;
-			pPacket = constructPacket(buff, strlen(buff));
-			while( !bSent ) {
-				memcpy(pTemp, pPacket, sizeof( Packet ));
-				//bGremlin = gremlin(fDamaged, fLost, pTemp);
-				bSent = sendPacket(pTemp, bGremlin); 
+			//We need to be sending these 16 packets at the same time listening for ack/nacks?? Threads??
+			// AMB
+			for(int k=0; k <= iLastPacket; k++) {
+				while( !bSent ) {
+					memcpy(pTemps[k], pPackets[k], sizeof( Packet ));
+					//bGremlin = gremlin(fDamaged, fLost, pTemp);
+					bSent = sendPacket(pTemps[k], bGremlin); 
+				}
+				bSent = false;
 			}
-
-
 		}
 
 		iFile.close();
@@ -326,6 +266,12 @@ void sendFile(const char* getFile) {
 	sendto(fd, "\0", 1, 0, (struct sockaddr*)&remaddr, addrlen);
 
 	cout << "Sending Complete!\n";
-	delete pPacket;
-	delete pTemp;
+
+	sequenceNum = 0;
+
+	//Free up memory
+	for(int i=0; i < WINDOWSIZE; i++) {
+		delete pPackets[i];
+		delete pTemps[i];
+	}
 }
