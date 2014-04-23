@@ -269,7 +269,7 @@ void receiveData(string sFilename) {
 			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
 
 		} else if( expectedSeq != pPacket->Sequence ) {
-			cout << "Out of order packet - ACK - Last Received(Sequence Num): " << (int)(seqnum) << "(" << (int)pPacket->Sequence << ")\n";
+			cout << "Out of order packet - ACK - Last Received(Sequence Num): " << (int)(seqnum) << "(" << (int)pPacket->Sequence << ") - " << (int)expectedSeq << "\n";
 			pPacket = constructPacket(ACK, seqnum);
 			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
 
@@ -288,7 +288,9 @@ void receiveData(string sFilename) {
 			outFile << buffer;
 
 			seqnum = expectedSeq;
+			cout << "Old: " << (int)expectedSeq << " " << (int)pPacket->Sequence;
 			expectedSeq = (expectedSeq + 1) % SEQMODULO;
+			cout << " New: " << (int)expectedSeq << endl;
 
 			cout << "ACK - Seq Num: " << (int)expectedSeq << "\n";
 			pPacket = constructPacket(ACK,expectedSeq);
