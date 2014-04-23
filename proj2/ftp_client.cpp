@@ -16,26 +16,31 @@
 #include <stdint.h>
 
 #define BUFSIZE 512
-#define DATASIZE 510
-#define HEADERSIZE 2
+#define DATASIZE 508
+#define HEADERSIZE 4
 #define PORT 10035
 #define MAXLINE 1024
 #define WINDOWSIZE 16
 #define SEQMODULO 32
+#define ACK 1
+#define NAK 0
 
 using namespace std;
 
 typedef struct {
 	uint8_t Sequence;
-	unsigned char Checksum;
+	uint8_t Ack;
+	uint16_t Checksum;
 	char Data[DATASIZE];
 } Packet;	
 
 void usage();
-char generateChecksum(char*, int);
+uint16_t generateChecksum(char*, int);
 Packet* constructPacket(char*, int);
+Packet* constructPacket(uint8_t, uint8_t);
 bool sendPacket(const Packet*, bool); 
 vector<string> getUserInput(void);
+bool isCorrupt();
 void receiveData(string);
 
 int fd;
@@ -49,9 +54,6 @@ char data[BUFSIZE - HEADERSIZE];
 Packet *pPacket;
 uint8_t expectedSeq = 0;
 
-// ACK and NAK constants
-char nak[2] = {'0', 0};
-char ack[2] = {'1', 0};
 
 int main(int argc, char *argv[])
 {
@@ -147,7 +149,7 @@ int main(int argc, char *argv[])
 
 			receiveData(userInput[2]);
 			
-			cout << "Sending Complete!\n";
+			cout << "GET successfully completed\n";
 
 	        } else if( userInput.front().compare("quit") == 0 ) {
 			cout << "Good-bye!\n";
@@ -163,11 +165,11 @@ int main(int argc, char *argv[])
 }
 
 void usage() {
-	cout << "Use the following syntax: \nproject1 -l <lost packets> -d <damaged packets>" << endl;
+	cout << "Use the following syntax: \nproject2 -l <lost packets> -d <damaged packets>" << endl;
 }
 
 unsigned char generateChecksum( Packet* pPacket ) {
-	unsigned char retVal = 0x00;
+	uint16_t retVal = 0;
 
 	retVal = pPacket->Sequence;
 
@@ -192,6 +194,21 @@ Packet* constructPacket(char* data, int length) {
 		if( i < length )
 			pPacket->Data[i] = data[i];
 		else
+			pPacket->Data[i] = '\0';
+	}
+
+	pPacket->Checksum = generateChecksum(pPacket);
+
+	return pPacket;
+}
+
+Packet* constructPacket(uint8_t ak, uint8_t sequenceNum) {
+	Packet* pPacket = new Packet;
+
+	pPacket->Sequence = sequenceNum;
+	pPacket->Ack = ak;
+
+	for( int i=0; i < DATASIZE; i++ ) {
 			pPacket->Data[i] = '\0';
 	}
 
@@ -235,25 +252,35 @@ vector<string> getUserInput(void) {
 	return result;
 }
 
+bool isCorrupt() {
+	uint16_t uiChecksum = 0;
+	memcpy(&uiChecksum, &buf[2], sizeof(uint16_t));
+	return generateChecksum(pPacket) == uiChecksum;
+}
+
 void receiveData(string sFilename) {
-    	ofstream outFile;
-    	outFile.open(sFilename.c_str(), fstream::out | fstream::trunc);
+	ofstream outFile;
+	outFile.open(sFilename.c_str(), fstream::out | fstream::trunc);
 
-    	recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
+	recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
 
-    	memcpy(pPacket, buf, BUFSIZE);
+	memcpy(pPacket, buf, BUFSIZE);
     
 	while ( recvlen > 1 ) {
 		//Make checksum
-		if ( generateChecksum(pPacket) != buf[1]) {
+		
+
+		if ( isCorrupt() ) {
 			cout << "Checksum invalid - NAK - Sequence Num: " << (int)pPacket->Sequence << "\n";
-			nak[1] = expectedSeq;
-			sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
-		/*} else if( expectedSeq != pPacket->Sequence ) {
+			pPacket = constructPacket(NAK,expectedSeq);
+			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
+
+		} else if( expectedSeq != pPacket->Sequence ) {
 			cout << "Out of order packet - ACK - Last Received(Sequence Num): " << (int)(expectedSeq - 1) << "(" << (int)pPacket->Sequence << ")\n";
-			nak[1] = (expectedSeq - 1);
-			sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
-		*/} else {
+			pPacket = constructPacket(ACK,expectedSeq - 1);
+			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
+
+		} else {
 			//Add data to buffer (minus two byte header)
 			for( int x = HEADERSIZE; x < recvlen; x++) {
 				data[x - HEADERSIZE] = buf[x];
@@ -270,18 +297,14 @@ void receiveData(string sFilename) {
 			expectedSeq = (expectedSeq + 1) % SEQMODULO;
 
 			cout << "ACK - Seq Num: " << (int)expectedSeq << "\n";
-			ack[1] = expectedSeq;
-			sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
+			pPacket = constructPacket(ACK,expectedSeq);
+			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
 		}
 
 		recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
 		memcpy(pPacket, buf, BUFSIZE);
 	}
 
-
-	//ack[1] = seqnum;
-	//sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 	outFile.close();
-
 	expectedSeq = 0;
 }
