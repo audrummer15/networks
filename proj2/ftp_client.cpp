@@ -255,7 +255,7 @@ vector<string> getUserInput(void) {
 bool isCorrupt() {
 	uint16_t uiChecksum = 0;
 	memcpy(&uiChecksum, &buf[2], sizeof(uint16_t));
-	return generateChecksum(pPacket) != uiChecksum;
+	return generateChecksum(pPacket) == uiChecksum;
 }
 
 void receiveData(string sFilename) {
@@ -276,8 +276,8 @@ void receiveData(string sFilename) {
 			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
 
 		} else if( expectedSeq != pPacket->Sequence ) {
-			cout << "Out of order packet - ACK - Last Received(Sequence Num): " << (int)(expectedSeq - 1) << "(" << (int)pPacket->Sequence << ")\n";
-			pPacket = constructPacket(ACK,expectedSeq - 1);
+			cout << "Out of order packet - ACK - Last Received(Sequence Num): " << (int)(seqnum) << "(" << (int)pPacket->Sequence << ")\n";
+			pPacket = constructPacket(ACK,seqnum);
 			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
 
 		} else {
@@ -291,9 +291,11 @@ void receiveData(string sFilename) {
 
 			cout << endl;
 
+
 			string buffer(data);
 			outFile << buffer;
-
+			
+			seqnum = expectedSeq;
 			expectedSeq = (expectedSeq + 1) % SEQMODULO;
 
 			cout << "ACK - Seq Num: " << (int)expectedSeq << "\n";
