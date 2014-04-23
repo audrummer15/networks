@@ -36,8 +36,8 @@ typedef struct {
 
 void usage();
 uint16_t generateChecksum(Packet*);
-Packet* constructPacket(char*, int);
-Packet* constructPacket(uint8_t, uint8_t);
+void constructPacket(char*, int, Packet*);
+void constructPacket(uint8_t, uint8_t, Packet*);
 bool sendPacket(const Packet*, bool); 
 vector<string> getUserInput(void);
 bool isCorrupt();
@@ -51,7 +51,7 @@ int recvlen;                    		/* # bytes received */
 unsigned char buf[BUFSIZE];    		/* receive buffer */
 uint8_t seqnum = 0;
 char data[BUFSIZE - HEADERSIZE];
-Packet *pPacket;
+Packet *pPacket = new Packet;
 uint8_t expectedSeq = 0;
 
 
@@ -71,9 +71,6 @@ int main(int argc, char *argv[])
 	bool bSent = false;
 	bool bGremlin = false;
 	bool bContinue = true;
-
-	//Sending variable
-	Packet *pTemp = new Packet;
 
 	for(int i=1;i < argc; i+= 2)
 	{
@@ -135,7 +132,7 @@ int main(int argc, char *argv[])
 			bSent = false;
 			userInput.push_back(userInput[1]);
 			userInput[1].insert(0, userInput[0] + " ");
-			pPacket = constructPacket((char*)userInput[1].c_str(), strlen(userInput[1].c_str()));
+			constructPacket((char*)userInput[1].c_str(), strlen(userInput[1].c_str()), pPacket);
 
 			cout << "Sending GET..." << endl;
 			while( sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr*)&remaddr, slen) == -1);
@@ -175,8 +172,8 @@ uint16_t generateChecksum( Packet* pPacket ) {
 	return retVal;
 }
 
-Packet* constructPacket(char* data, int length) {
-	Packet* pPacket = new Packet;
+void constructPacket(char* data, int length, Packet* pPacket) {
+	//Packet* pPacket = new Packet;
 	static uint8_t sequenceNum = 0;
 
 	pPacket->Sequence = sequenceNum;
@@ -192,11 +189,11 @@ Packet* constructPacket(char* data, int length) {
 
 	pPacket->Checksum = generateChecksum(pPacket);
 
-	return pPacket;
+	return;
 }
 
-Packet* constructPacket(uint8_t ak, uint8_t sequenceNum) {
-	Packet* pPacket = new Packet;
+void constructPacket(uint8_t ak, uint8_t sequenceNum, Packet* pPacket) {
+	//Packet* pPacket = new Packet;
 
 	pPacket->Sequence = sequenceNum;
 	pPacket->Ack = ak;
@@ -207,7 +204,7 @@ Packet* constructPacket(uint8_t ak, uint8_t sequenceNum) {
 
 	pPacket->Checksum = generateChecksum(pPacket);
 
-	return pPacket;
+	return;
 }
 
 
@@ -265,12 +262,12 @@ void receiveData(string sFilename) {
 
 		if ( isCorrupt() ) {
 			cout << "Checksum invalid - NAK - Sequence Num: " << (int)pPacket->Sequence << "\n";
-			pPacket = constructPacket(NAK,expectedSeq);
+			constructPacket(NAK,expectedSeq, pPacket);
 			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
 
 		} else if( expectedSeq != pPacket->Sequence ) {
 			cout << "Out of order packet - ACK - Last Received(Sequence Num): " << (int)(seqnum) << "(" << (int)pPacket->Sequence << ") - " << (int)expectedSeq << "\n";
-			pPacket = constructPacket(ACK, seqnum);
+			constructPacket(ACK, seqnum, pPacket);
 			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
 
 		} else {
@@ -293,12 +290,34 @@ void receiveData(string sFilename) {
 			cout << " New: " << (int)expectedSeq << endl;
 
 			cout << "ACK - Seq Num: " << (int)expectedSeq << "\n";
-			pPacket = constructPacket(ACK,expectedSeq);
+			constructPacket(ACK,expectedSeq, pPacket);
 			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
 		}
 
-		recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
-		memcpy(pPacket, buf, BUFSIZE);
+		//Start Poll on base
+		int recvPollVal = 0;
+		int iLength = 0;
+		struct pollfd ufds;
+		unsigned char recvline[MAXLINE + 1];
+		ufds.fd = fd;
+		ufds.events = POLLIN;
+
+		while(true) {	
+			recvPollVal = poll(&ufds, 1, 100);
+
+			if( recvPollVal == -1 ) {
+				cerr << "Error polling socket..." << endl;
+			} else if( recvPollVal == 0 ) { //We timed out right here
+				cerr << "Timeout... Lost ACK" << endl;
+				//resend previous ack/nak
+				while(sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen) == -1);
+			} else {
+				recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
+				memcpy(pPacket, buf, BUFSIZE);
+				break;
+			}
+		}
+
 	}
 
 	outFile.close();
