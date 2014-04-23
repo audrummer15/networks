@@ -317,6 +317,8 @@ void sendFile(const char* getFile) {
 		nextSequenceNum = 1;
 		cout << "lTotalSeg: " << (int)lTotalSegments << endl;
 		for(int k=0; k < min(WINDOWSIZE, lTotalSegments); k++) {
+			cout << "initial" << endl;
+			memset( pTemps[k], '\0', BUFSIZE );
 			memcpy(pTemps[k], pPackets[k], sizeof( Packet ));
 			gettimeofday(&sendTime[k], NULL); //Gets the current time
 			cout << "Sent a packet..." << (int)pTemps[k]->Sequence << endl;
@@ -344,6 +346,8 @@ void sendFile(const char* getFile) {
 				
 				//Send everything again
 				for(int k = lBase - 1; k < min(lBase + WINDOWSIZE, lTotalSegments); k++) {
+					cout << "send all again" << endl;
+					memset( pTemps[k], '\0', BUFSIZE );
 					memcpy(pTemps[k], pPackets[k], sizeof( Packet ));
 					gettimeofday(&sendTime[k % SEQMODULO], NULL); //Gets the current time
 			
@@ -355,6 +359,7 @@ void sendFile(const char* getFile) {
 			} else {
 				
 				iLength = recvfrom(fd, recvline, MAXLINE, 0, (struct sockaddr*)&remaddr, &addrlen);
+				memset( pTemp, '\0', BUFSIZE );
 				memcpy(pTemp, recvline, BUFSIZE);
 
 				if( pTemp->Ack == ACK ) {
@@ -362,24 +367,27 @@ void sendFile(const char* getFile) {
 						ackCount++;
 						cout << "Inside ACK. Got SN: " << (int)pTemp->Sequence << "   lBase = " << (int)lBase << endl;
 						if(lBase + WINDOWSIZE < lTotalSegments) {
+							memset( pTemps[lBase + WINDOWSIZE - 1], '\0', BUFSIZE );
 							memcpy(pTemps[lBase + WINDOWSIZE - 1], pPackets[lBase + WINDOWSIZE - 1], sizeof( Packet ));
 							gettimeofday(&sendTime[(lBase + WINDOWSIZE - 1) % SEQMODULO], NULL); //Gets the current time
 							pthread_create(&sendThread[(lBase + WINDOWSIZE - 1) % SEQMODULO], NULL, sendPacket, pTemps[lBase]);
 							cout << "Sent a packet..." << (int)pPackets[lBase+WINDOWSIZE - 1]->Sequence << endl;
 						}
-						lBase = pTemp->Sequence + 1;
+						//lBase = pTemp->Sequence + 1;
+						lBase++;
 					}
 				} else {
 					
 					//NAK, Send everything again
-					for(int k = lBase; k < min(lBase + WINDOWSIZE, lTotalSegments); k++) {
+					/*for(int k = lBase-1; k < min(lBase + WINDOWSIZE, lTotalSegments); k++) {
+						memset( pTemps[k], '\0', BUFSIZE );
 						memcpy(pTemps[k], pPackets[k], sizeof( Packet ));
 						gettimeofday(&sendTime[k % SEQMODULO], NULL); //Gets the current time
 			
 						pthread_create(&sendThread[k % SEQMODULO], NULL, sendPacket, pTemps[k]);
 			
 						cout << "Resent a packet..." << (int)pPackets[k]->Sequence << endl;
-					}
+					}*/
 
 				}
 				//if ack
