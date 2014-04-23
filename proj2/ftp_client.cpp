@@ -35,7 +35,7 @@ typedef struct {
 } Packet;	
 
 void usage();
-uint16_t generateChecksum(char*, int);
+uint16_t generateChecksum(Packet*);
 Packet* constructPacket(char*, int);
 Packet* constructPacket(uint8_t, uint8_t);
 bool sendPacket(const Packet*, bool); 
@@ -136,13 +136,6 @@ int main(int argc, char *argv[])
 			userInput.push_back(userInput[1]);
 			userInput[1].insert(0, userInput[0] + " ");
 			pPacket = constructPacket((char*)userInput[1].c_str(), strlen(userInput[1].c_str()));
-			
-			/*while( !bSent ) {
-				memcpy(pTemp, pPacket, sizeof( Packet ));
-				//bGremlin = gremlin(fDamaged, fLost, pTemp);
-				cout << "Sending GET..." << endl;
-				bSent = sendPacket(pTemp, bGremlin);
-			}*/
 
 			cout << "Sending GET..." << endl;
 			while( sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr*)&remaddr, slen) == -1);
@@ -168,7 +161,7 @@ void usage() {
 	cout << "Use the following syntax: \nproject2 -l <lost packets> -d <damaged packets>" << endl;
 }
 
-unsigned char generateChecksum( Packet* pPacket ) {
+uint16_t generateChecksum( Packet* pPacket ) {
 	uint16_t retVal = 0;
 
 	retVal = pPacket->Sequence;
@@ -255,7 +248,7 @@ vector<string> getUserInput(void) {
 bool isCorrupt() {
 	uint16_t uiChecksum = 0;
 	memcpy(&uiChecksum, &buf[2], sizeof(uint16_t));
-	return generateChecksum(pPacket) == uiChecksum;
+	return generateChecksum(pPacket) != uiChecksum;
 }
 
 void receiveData(string sFilename) {
@@ -277,7 +270,7 @@ void receiveData(string sFilename) {
 
 		} else if( expectedSeq != pPacket->Sequence ) {
 			cout << "Out of order packet - ACK - Last Received(Sequence Num): " << (int)(seqnum) << "(" << (int)pPacket->Sequence << ")\n";
-			pPacket = constructPacket(ACK,seqnum);
+			pPacket = constructPacket(ACK, seqnum);
 			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
 
 		} else {
@@ -291,10 +284,9 @@ void receiveData(string sFilename) {
 
 			cout << endl;
 
-
 			string buffer(data);
 			outFile << buffer;
-			
+
 			seqnum = expectedSeq;
 			expectedSeq = (expectedSeq + 1) % SEQMODULO;
 
