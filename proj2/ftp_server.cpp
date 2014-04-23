@@ -10,21 +10,31 @@
 #include <sys/socket.h>
 #include <sys/poll.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
 #include <stdint.h>
+#include <math.h>
+#include <unistd.h>
+#include <pthread.h>
 
 using namespace std;
 
 #define PORT 10035
+#define TIMEOUT 20000 //20 ms or 20000 us
 #define BUFSIZE 512
-#define DATASIZE 510
-#define HEADERSIZE 2
+#define DATASIZE 508
+#define HEADERSIZE 4
 #define MAXLINE 1024
 #define WINDOWSIZE 16
 #define SEQMODULO 32
+#define ACK 1
+#define NAK 0
+#define NORMAL_PACKET 0
+#define DELAYED_PACKET 1
+#define LOST_PACKET 2
 
 /* PORTS ASSIGNED TO GROUP
 	10034 - 10037 
@@ -32,11 +42,15 @@ using namespace std;
 
 typedef struct {
 	uint8_t Sequence;
-	unsigned char Checksum;
+	uint8_t Ack;
+	uint16_t Checksum;
 	char Data[DATASIZE];
 } Packet;
 
 // GLOBAL DATA
+struct timeval sendTime[SEQMODULO];
+struct timeval currentTime;
+pthread_t sendThread[SEQMODULO];
 struct sockaddr_in myaddr;      		/* our address */
 struct sockaddr_in remaddr;     		/* remote address */
 socklen_t addrlen = sizeof(remaddr);        /* length of addresses */
@@ -51,17 +65,57 @@ uint8_t nextSequenceNum = 1;
 long lTotalSegments = 0;
 long lBase = 1;
 
-
-unsigned char generateChecksum( Packet*); 
+uint16_t generateChecksum( Packet*); 
 void sendFile(const char*);
-void segmentFile(const char*);
-bool sendPacket(const Packet*, bool);
+void sendPacket(const Packet*, bool);
 Packet* constructPacket(char*, int);
 long GetFileSize(std::string);
+bool notcorrupt(Packet*);
+int gremlin(float, float, float, Packet*);
+float fDamaged = 0;
+float fLost = 0; 
+float fDelayed = 0;
+int min(int a, int b);
+long lDelay;
+long ackCount = 0;
 
-int main()
+
+int main(int argc, char *argv[])
 {    
+	for(int i=1;i < argc; i+= 2)
+	{
+		switch (argv[i] [1])
+		{
+			case 'd':
+			{
+				fDamaged = atof(argv[i+1]);
+			};
+			break;
 
+			case 'l':
+			{
+				fLost = atof(argv[i+1]);
+			};
+			break;
+
+			case 's':
+			{
+				fDelayed = atof(argv[i+1]);
+			};
+			break;
+
+			case 't':
+			{
+				lDelay = atol(argv[i+1]);
+			};
+			break;
+			
+			case 'h':
+			{
+				return 0;
+			}
+		}
+	}
 	/* create a UDP socket */
 
 	if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
@@ -92,7 +146,7 @@ int main()
 			Packet* pPacket = new Packet;
 			memcpy(pPacket, buf, BUFSIZE);
 
-			//Add data to buffer (minus two byte header)
+			//Add data to buffer (minus header)
 			for( int x = HEADERSIZE; x < recvlen; x++) {
 				data[x - HEADERSIZE] = buf[x];
 				cout << buf[x];
@@ -101,27 +155,33 @@ int main()
 
 			string command(data);
 
-			//Make checksum
-			if ( generateChecksum(pPacket) != buf[1]) {
-				//cout << "Checksum invalid - NAK >> " << command << "\n";
-				//nak[1] = seqnum;
-				//sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
-			} else {
+			if ( notcorrupt(pPacket) ) {
 				if ( command.substr(0,3) == "GET" || command.substr(0,3) == "get" ) {
-					//cout << "Checksum valid - ACK\n";
+					cout << "Checksum valid GET - ACK\n";
 					seqnum = pPacket->Sequence;
 					//ack[1] = seqnum;
 					//sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
-					lTotalSegments = GetFileSize( command.substr(4, command.length()).c_str() ) / DATASIZE;
-					//segmentFile(command.substr(4, command.length()).c_str());
-					cout << "Segmented" << endl;
+					if(GetFileSize( command.substr(4, command.length()).c_str() ) % DATASIZE == 0)
+					{
+						lTotalSegments = GetFileSize( command.substr(4, command.length()).c_str() ) / DATASIZE;
+					}
+					else
+					{
+						lTotalSegments = GetFileSize( command.substr(4, command.length()).c_str() ) / DATASIZE + 1;
+					}
+
 					sendFile(command.substr(4, command.length()).c_str());
 					cout << "GET successfully completed" << endl;
 				} else {
-					//cout << "Not a GET command - NAK\n";
+					cout << "Not a GET command - NAK\n";
 					//nak[1] = (char)pPacket->Sequence ^ 30;
 					//sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 				}
+			} else {
+				cout << "landed invalid" << endl;
+				//cout << "Checksum invalid - NAK >> " << command << "\n";
+				//nak[1] = seqnum;
+				//sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 			}
 
 			delete pPacket;
@@ -130,8 +190,8 @@ int main()
 }
 
 
-unsigned char generateChecksum( Packet* pPacket ) {
-	unsigned char retVal = 0x00;
+uint16_t generateChecksum( Packet* pPacket ) {
+	uint16_t retVal = 0;
 
 	retVal = pPacket->Sequence;
 
@@ -146,7 +206,6 @@ unsigned char generateChecksum( Packet* pPacket ) {
 
 Packet* constructPacket(char* data, int length) {
 	Packet* pPacket = new Packet;
-	//static uint8_t sequenceNum = 0; moved to global AMB
 
 	pPacket->Sequence = sequenceNum;
 
@@ -164,21 +223,31 @@ Packet* constructPacket(char* data, int length) {
 	return pPacket;
 }
 
-bool sendPacket(const Packet* pPacket, bool bLost) {
-	bool bReturn = false;
+void *sendPacket(void *args) {
 
-	//Send packet
-	if(!bLost)
+	//Call the gremlin function
+	Packet * tbSent = (Packet *)args;
+	cout << "Sent Packet Number: " << (int)tbSent->Sequence << endl;
+	int gremlinReturn = gremlin(fDamaged, fLost, fDelayed, tbSent);
+	if(gremlinReturn == LOST_PACKET)
 	{
-		if (sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr*)&remaddr, addrlen) == -1) {
-			cerr << "Problem sending packet with sequence #" << pPacket->Sequence << "..." << endl;
-			bReturn = false;
-		} else {
-			bReturn = true;
+	}
+	else if(gremlinReturn == DELAYED_PACKET)
+	{
+		usleep(1000 * lDelay);
+		while(sendto(fd, tbSent, BUFSIZE, 0, (struct sockaddr*)&remaddr, addrlen) == -1)
+		{	
+			cerr << "Problem sending packet with sequence #" << tbSent->Sequence << "..." << endl; //Keep trying to send
 		}
 	}
-  
-	return bReturn;
+	else
+	{
+		while(sendto(fd, tbSent, BUFSIZE, 0, (struct sockaddr*)&remaddr, addrlen) == -1)
+		{	
+			cerr << "Problem sending packet with sequence #" << tbSent->Sequence << "..." << endl; //Keep trying to send
+		}
+	}
+
 }
 
 void sendFile(const char* getFile) {
@@ -187,11 +256,10 @@ void sendFile(const char* getFile) {
 	unsigned char csum = 0x00;
 	unsigned char lost = 0x00;
 	char buff[DATASIZE];
-	bool bSent = false, bGremlin = false;
+	bool bSent = false;
+	bool bGremlin = false;
 	Packet *pPackets[lTotalSegments];
 	Packet *pTemps[lTotalSegments];
-	bool bEOF = false;
-	int iLastPacket = lTotalSegments - 1;
 
 	//Initialize packet set
 	for( int i=0; i < lTotalSegments; i++ ) {
@@ -201,11 +269,11 @@ void sendFile(const char* getFile) {
 
 	if(iFile.is_open())
 	{  
+		int k = 0;
 
 		while(!iFile.eof())
 		{
 
-			for( int k=0; k < lTotalSegments; k++ ) {
 
 				/************************************************/
 				// This part of the code reads in from the      //
@@ -228,45 +296,100 @@ void sendFile(const char* getFile) {
 							buff[i-1]= '\0';
 						}
 						buff[i] = '\0';
-						bEOF = true;
 					}
 				}
 
 				cout << endl;
 
-
-				/*************************************************/
-				// This part of the code looks at the input      //
-				// parameters and determines if a packet should  //
-				// be simulated lost or damaged. This is also    //
-				// known as the GREMLIN function        	 //
-				/*************************************************/
-
-				//Send
-				bSent = false;
 				pPackets[k] = constructPacket(buff, strlen(buff));
+				k++;
 
-				if( bEOF ) {
-					//Mark the last packet in window size to send so we aren't sending empty packets
-					// in the next loop.
-					iLastPacket = k;
-					break;
-				}
-			}
 
-			//We need to be sending these 16 packets at the same time listening for ack/nacks?? Threads??
-			// AMB
-			for(int k=0; k <= iLastPacket; k++) {
-				while( !bSent ) {
-					memcpy(pTemps[k], pPackets[k], sizeof( Packet ));
-					//bGremlin = gremlin(fDamaged, fLost, pTemp);
-					bSent = sendPacket(pTemps[k], bGremlin); 
-				}
-				bSent = false;
-			}
 		}
 
 		iFile.close();
+
+		////////////////////////////////////////
+		//Send the first window full of stuff //
+		////////////////////////////////////////
+		
+		lBase = 1;		
+		nextSequenceNum = 1;
+		cout << "lTotalSeg: " << (int)lTotalSegments << endl;
+		for(int k=0; k < min(WINDOWSIZE, lTotalSegments); k++) {
+			memcpy(pTemps[k], pPackets[k], sizeof( Packet ));
+			gettimeofday(&sendTime[k], NULL); //Gets the current time
+			cout << "Sent a packet..." << (int)pTemps[k]->Sequence << endl;
+			pthread_create(&sendThread[k], NULL, sendPacket, pTemps[k]);
+		}
+
+		while(ackCount < lTotalSegments)
+		{
+			//Start Poll on base
+			int recvPollVal = 0;
+			int iLength = 0;
+			struct pollfd ufds;
+			unsigned char recvline[MAXLINE + 1];
+			Packet *pTemp = new Packet;
+
+			ufds.fd = fd;
+			ufds.events = POLLIN;
+			gettimeofday(&currentTime, NULL);
+			recvPollVal = poll(&ufds, 1, (TIMEOUT - (currentTime.tv_usec - sendTime[lBase % SEQMODULO].tv_usec)) / 1000);
+
+			if( recvPollVal == -1 ) {
+				cerr << "Error polling socket..." << endl;
+			} else if( recvPollVal == 0 ) { //We timed out right here
+				cerr << "Timeout... Lost Packet, Sequence Number - " << lBase << endl;
+				
+				//Send everything again
+				for(int k = lBase - 1; k < min(lBase + WINDOWSIZE, lTotalSegments); k++) {
+					memcpy(pTemps[k], pPackets[k], sizeof( Packet ));
+					gettimeofday(&sendTime[k % SEQMODULO], NULL); //Gets the current time
+			
+					pthread_create(&sendThread[k % SEQMODULO], NULL, sendPacket, pTemps[k]);
+			
+					cout << "Resent a packet..." << (int)pPackets[k]->Sequence << endl;
+				}
+				
+			} else {
+				
+				iLength = recvfrom(fd, recvline, MAXLINE, 0, (struct sockaddr*)&remaddr, &addrlen);
+				memcpy(pTemp, recvline, BUFSIZE);
+
+				if( pTemp->Ack == ACK ) {
+					if((pTemp->Sequence == lBase % SEQMODULO)) {
+						ackCount++;
+						cout << "Inside ACK. Got SN: " << (int)pTemp->Sequence << "   lBase = " << (int)lBase << endl;
+						if(lBase + WINDOWSIZE < lTotalSegments) {
+							memcpy(pTemps[lBase + WINDOWSIZE - 1], pPackets[lBase + WINDOWSIZE - 1], sizeof( Packet ));
+							gettimeofday(&sendTime[(lBase + WINDOWSIZE - 1) % SEQMODULO], NULL); //Gets the current time
+							pthread_create(&sendThread[(lBase + WINDOWSIZE - 1) % SEQMODULO], NULL, sendPacket, pTemps[lBase]);
+							cout << "Sent a packet..." << (int)pPackets[lBase+WINDOWSIZE - 1]->Sequence << endl;
+						}
+						lBase = pTemp->Sequence + 1;
+					}
+				} else {
+					
+					//NAK, Send everything again
+					for(int k = lBase; k < min(lBase + WINDOWSIZE, lTotalSegments); k++) {
+						memcpy(pTemps[k], pPackets[k], sizeof( Packet ));
+						gettimeofday(&sendTime[k % SEQMODULO], NULL); //Gets the current time
+			
+						pthread_create(&sendThread[k % SEQMODULO], NULL, sendPacket, pTemps[k]);
+			
+						cout << "Resent a packet..." << (int)pPackets[k]->Sequence << endl;
+					}
+
+				}
+				//if ack
+				//if nak
+			}
+
+			delete pTemp;
+		}
+
+		
 	}
 	else
 	{
@@ -293,82 +416,135 @@ long GetFileSize(std::string filename)
     return rc == 0 ? stat_buf.st_size : -1;
 }
 
-void segmentFile(const char* getFile) {
-	ifstream iFile;
-	iFile.open(getFile);
-	unsigned char csum = 0x00;
-	unsigned char lost = 0x00;
-	char buff[DATASIZE];
-	bool bSent = false, bGremlin = false;
-	Packet *pPackets[lTotalSegments];
-	Packet *pTemps[lTotalSegments];
-	bool bEOF = false;
-	int iLastPacket = lTotalSegments - 1;
+bool notcorrupt(Packet* pPacket) {
+	bool bReturn = false;
+	uint16_t uiChecksum = 0;
 
-	//Initialize packet set
-	for( int i=0; i < lTotalSegments; i++ ) {
-		pPackets[i] = new Packet;
-		pTemps[i] = new Packet;
+	//Make checksum	
+	memcpy( &uiChecksum, &buf[2], sizeof( uint16_t ) );
+
+	if ( generateChecksum(pPacket) != uiChecksum) {
+		bReturn = false;
+	} else {
+		bReturn = true;
 	}
 
-	if(iFile.is_open())
-	{  
+	return bReturn;
+}
 
-		while(!iFile.eof())
+int gremlin(float fDamaged, float fLost, float fDelayed, Packet* ppacket)
+{
+	if(fLost > (1.0 * rand()) / (1.0 * RAND_MAX))
+	{
+		return LOST_PACKET;
+	}
+
+	if(fDamaged > (1.0 * rand()) / (1.0 * RAND_MAX))
+	{
+		int numDamaged = rand() % 10;
+		int byteNum = rand() % BUFSIZE;
+		if(numDamaged == 9)
 		{
+			if(numDamaged > 1)
+			{
+				ppacket->Data[numDamaged-HEADERSIZE]+= 8;	
+			}
+			else if(numDamaged == 1)
+			{
+				ppacket->Checksum+= 8;
+			}
+			else
+			{
+				ppacket->Sequence+= 8;
+			}
 
-			for( int k=0; k < lTotalSegments; k++ ) {
-
-				/************************************************/
-				// This part of the code reads in from the      //
-				// open file and fills up the data part of      //
-				// the packet. It also calculates the checksum. //
-				/************************************************/
-				for(int i = 0; i < DATASIZE; i++)
-				{
-					if(!iFile.eof())
-					{
-						buff[i] = iFile.get();
-						
-						if( i < 48 ) {
-							cout << buff[i];
-						}
-					}
-					else
-					{
-						if( i != 0 ) {
-							buff[i-1]= '\0';
-						}
-						buff[i] = '\0';
-						bEOF = true;
-					}
-				}
-
-				cout << endl;
-
-
-				/*************************************************/
-				// This part of the code looks at the input      //
-				// parameters and determines if a packet should  //
-				// be simulated lost or damaged. This is also    //
-				// known as the GREMLIN function        	 //
-				/*************************************************/
-
-				//Send
-				bSent = false;
-				pPackets[k] = constructPacket(buff, strlen(buff));
+			numDamaged = rand() % 10;
+			if(numDamaged > 1)
+			{
+				ppacket->Data[numDamaged-HEADERSIZE]+= 4;	
+			}
+			else if(numDamaged == 1)
+			{
+				ppacket->Checksum+= 4;
+			}
+			else
+			{
+				ppacket->Sequence+= 4;
+			}
+			
+			numDamaged = rand() % 10;
+			if(numDamaged > 1)
+			{
+				ppacket->Data[numDamaged-HEADERSIZE]+= 2;	
+			}
+			else if(numDamaged == 1)
+			{
+				ppacket->Checksum+= 2;
+			}
+			else
+			{
+				ppacket->Sequence+= 2;
 			}
 		}
+		else if(numDamaged > 6)
+		{
+			if(numDamaged > 1)
+			{
+				ppacket->Data[numDamaged-HEADERSIZE]+= 8;	
+			}
+			else if(numDamaged == 1)
+			{
+				ppacket->Checksum+= 8;
+			}
+			else
+			{
+				ppacket->Sequence+= 8;
+			}
 
-		iFile.close();
+			numDamaged = rand() % 10;
+			if(numDamaged > 1)
+			{
+				ppacket->Data[numDamaged-HEADERSIZE]+= 4;	
+			}	
+			else if(numDamaged == 1)
+			{		
+				ppacket->Checksum+= 4;
+			}	
+			else
+			{	
+				ppacket->Sequence+= 4;
+			}
+		}
+		else
+		{
+			if(numDamaged > 1)
+			{
+				ppacket->Data[numDamaged-HEADERSIZE]+=8;	
+			}	
+			else if(numDamaged == 1)
+			{
+				ppacket->Checksum+=4;
+			}
+			else
+			{
+				ppacket->Sequence+= 2;
+			}
+		}
+		return NORMAL_PACKET;
+
 	}
-
-	cout << "deleting" << endl;
-
-	for(int i=0; i < lTotalSegments; i++) {
-		delete pPackets[i];
-		delete pTemps[i];
+	else if(fDelayed > (1.0 * rand()) / (1.0 * RAND_MAX))
+	{
+		return DELAYED_PACKET;
 	}
+	return NORMAL_PACKET;
+}
 
-	cout << "made it" << endl;
+int min(int a, int b)
+{
+	if(a < b)
+	{
+		return a;
+	}
+	return b;
 }
