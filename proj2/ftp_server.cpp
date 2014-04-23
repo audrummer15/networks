@@ -204,8 +204,9 @@ uint16_t generateChecksum( Packet* pPacket ) {
 	return retVal;
 }
 
-Packet* constructPacket(char* data, int length) {
-	Packet* pPacket = new Packet;
+void constructPacket(char* data, int length, Packet* pPacket) {
+	//Packet* pPacket = new Packet;
+	static uint8_t sequenceNum = 0;
 
 	pPacket->Sequence = sequenceNum;
 
@@ -220,7 +221,7 @@ Packet* constructPacket(char* data, int length) {
 
 	pPacket->Checksum = generateChecksum(pPacket);
 
-	return pPacket;
+	return;
 }
 
 void *sendPacket(void *args) {
@@ -301,7 +302,7 @@ void sendFile(const char* getFile) {
 
 				cout << endl;
 
-				pPackets[k] = constructPacket(buff, strlen(buff));
+				constructPacket(buff, strlen(buff), pPackets[k]);
 				k++;
 
 
@@ -369,7 +370,7 @@ Packet *pTemp = new Packet;
 						}
 						lBase++;
 					}
-				} /*else {
+				} else {
 					
 					//NAK, Send everything again
 					if((pTemp->Sequence == lBase % SEQMODULO)) {
@@ -383,7 +384,7 @@ Packet *pTemp = new Packet;
 						}
 					}
 
-				}*/
+				}
 				//if ack
 				//if nak
 			}
