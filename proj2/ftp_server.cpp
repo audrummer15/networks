@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/poll.h>
+#include <sys/stat.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -46,11 +47,17 @@ uint8_t seqnum;
 char data[BUFSIZE - HEADERSIZE];
 uint8_t lastACK = 0;
 uint8_t sequenceNum = 0;
+uint8_t nextSequenceNum = 1;
+long lTotalSegments = 0;
+long lBase = 1;
+
 
 unsigned char generateChecksum( Packet*); 
 void sendFile(const char*);
+void segmentFile(const char*);
 bool sendPacket(const Packet*, bool);
 Packet* constructPacket(char*, int);
+long GetFileSize(std::string);
 
 int main()
 {    
@@ -105,6 +112,9 @@ int main()
 					seqnum = pPacket->Sequence;
 					//ack[1] = seqnum;
 					//sendto(fd, ack, 2, 0, (struct sockaddr *)&remaddr, addrlen);
+					lTotalSegments = GetFileSize( command.substr(4, command.length()).c_str() ) / DATASIZE;
+					//segmentFile(command.substr(4, command.length()).c_str());
+					cout << "Segmented" << endl;
 					sendFile(command.substr(4, command.length()).c_str());
 					cout << "GET successfully completed" << endl;
 				} else {
@@ -178,13 +188,13 @@ void sendFile(const char* getFile) {
 	unsigned char lost = 0x00;
 	char buff[DATASIZE];
 	bool bSent = false, bGremlin = false;
-	Packet *pPackets[WINDOWSIZE];
-	Packet *pTemps[WINDOWSIZE];
+	Packet *pPackets[lTotalSegments];
+	Packet *pTemps[lTotalSegments];
 	bool bEOF = false;
-	int iLastPacket = WINDOWSIZE - 1;
+	int iLastPacket = lTotalSegments - 1;
 
 	//Initialize packet set
-	for( int i=0; i < WINDOWSIZE; i++ ) {
+	for( int i=0; i < lTotalSegments; i++ ) {
 		pPackets[i] = new Packet;
 		pTemps[i] = new Packet;
 	}
@@ -195,7 +205,7 @@ void sendFile(const char* getFile) {
 		while(!iFile.eof())
 		{
 
-			for( int k=0; k < WINDOWSIZE; k++ ) {
+			for( int k=0; k < lTotalSegments; k++ ) {
 
 				/************************************************/
 				// This part of the code reads in from the      //
@@ -229,7 +239,7 @@ void sendFile(const char* getFile) {
 				// This part of the code looks at the input      //
 				// parameters and determines if a packet should  //
 				// be simulated lost or damaged. This is also    //
-				// known as the GREMLIN function         //
+				// known as the GREMLIN function        	 //
 				/*************************************************/
 
 				//Send
@@ -270,8 +280,95 @@ void sendFile(const char* getFile) {
 	sequenceNum = 0;
 
 	//Free up memory
-	for(int i=0; i < WINDOWSIZE; i++) {
+	for(int i=0; i < lTotalSegments; i++) {
 		delete pPackets[i];
 		delete pTemps[i];
 	}
+}
+
+long GetFileSize(std::string filename)
+{
+    struct stat stat_buf;
+    int rc = stat(filename.c_str(), &stat_buf);
+    return rc == 0 ? stat_buf.st_size : -1;
+}
+
+void segmentFile(const char* getFile) {
+	ifstream iFile;
+	iFile.open(getFile);
+	unsigned char csum = 0x00;
+	unsigned char lost = 0x00;
+	char buff[DATASIZE];
+	bool bSent = false, bGremlin = false;
+	Packet *pPackets[lTotalSegments];
+	Packet *pTemps[lTotalSegments];
+	bool bEOF = false;
+	int iLastPacket = lTotalSegments - 1;
+
+	//Initialize packet set
+	for( int i=0; i < lTotalSegments; i++ ) {
+		pPackets[i] = new Packet;
+		pTemps[i] = new Packet;
+	}
+
+	if(iFile.is_open())
+	{  
+
+		while(!iFile.eof())
+		{
+
+			for( int k=0; k < lTotalSegments; k++ ) {
+
+				/************************************************/
+				// This part of the code reads in from the      //
+				// open file and fills up the data part of      //
+				// the packet. It also calculates the checksum. //
+				/************************************************/
+				for(int i = 0; i < DATASIZE; i++)
+				{
+					if(!iFile.eof())
+					{
+						buff[i] = iFile.get();
+						
+						if( i < 48 ) {
+							cout << buff[i];
+						}
+					}
+					else
+					{
+						if( i != 0 ) {
+							buff[i-1]= '\0';
+						}
+						buff[i] = '\0';
+						bEOF = true;
+					}
+				}
+
+				cout << endl;
+
+
+				/*************************************************/
+				// This part of the code looks at the input      //
+				// parameters and determines if a packet should  //
+				// be simulated lost or damaged. This is also    //
+				// known as the GREMLIN function        	 //
+				/*************************************************/
+
+				//Send
+				bSent = false;
+				pPackets[k] = constructPacket(buff, strlen(buff));
+			}
+		}
+
+		iFile.close();
+	}
+
+	cout << "deleting" << endl;
+
+	for(int i=0; i < lTotalSegments; i++) {
+		delete pPackets[i];
+		delete pTemps[i];
+	}
+
+	cout << "made it" << endl;
 }
