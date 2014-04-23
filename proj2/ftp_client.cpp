@@ -255,7 +255,7 @@ vector<string> getUserInput(void) {
 bool isCorrupt() {
 	uint16_t uiChecksum = 0;
 	memcpy(&uiChecksum, &buf[2], sizeof(uint16_t));
-	return generateChecksum(pPacket) == uiChecksum;
+	return generateChecksum(pPacket) != uiChecksum;
 }
 
 void receiveData(string sFilename) {
