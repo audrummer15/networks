@@ -134,7 +134,7 @@ int main(int argc, char *argv[])
 			userInput[1].insert(0, userInput[0] + " ");
 			constructPacket((char*)userInput[1].c_str(), strlen(userInput[1].c_str()), pPacket);
 
-			cout << "Sending GET..." << endl;
+			cout << "Sending GET..." << pPacket->Data << endl;
 			while( sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr*)&remaddr, slen) == -1);
 
 			receiveData(userInput[2]);
@@ -260,18 +260,19 @@ void receiveData(string sFilename) {
 		//Make checksum
 		
 
-		if ( isCorrupt() ) {
-			cout << "Checksum invalid - NAK - Sequence Num: " << (int)pPacket->Sequence << "\n";
-			constructPacket(NAK,expectedSeq, pPacket);
-			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
-
-		} else if( expectedSeq != pPacket->Sequence ) {
-			cout << "Out of order packet - ACK - Last Received(Sequence Num): " << (int)(seqnum) << "(" << (int)pPacket->Sequence << ") - " << (int)expectedSeq << "\n";
+		if( expectedSeq != pPacket->Sequence ) {
+			cout << "Out Of Order - " << (int) pPacket->Sequence << "\n";
+			cout << "ACK - " << (int)(seqnum) << "\n";
 			constructPacket(ACK, seqnum, pPacket);
 			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
-
+		}
+		else if ( isCorrupt() ) {
+			cout << "NAK - " << (int)pPacket->Sequence << "\n";
+			constructPacket(NAK,expectedSeq, pPacket);
+			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
 		} else {
 			//Add data to buffer (minus two byte header)
+			cout << "ACK - " << (int)expectedSeq << "\n";
 			for( int x = HEADERSIZE; x < recvlen; x++) {
 				data[x - HEADERSIZE] = buf[x];
 				if ( x < 50 ) {
@@ -285,11 +286,11 @@ void receiveData(string sFilename) {
 			outFile << buffer;
 
 			seqnum = expectedSeq;
-			cout << "Old: " << (int)expectedSeq << " " << (int)pPacket->Sequence;
+			//cout << "Old: " << (int)expectedSeq << " " << (int)pPacket->Sequence;
 			expectedSeq = (expectedSeq + 1) % SEQMODULO;
-			cout << " New: " << (int)expectedSeq << endl;
+			//cout << " New: " << (int)expectedSeq << endl;
 
-			cout << "ACK - Seq Num: " << (int)expectedSeq << "\n";
+			
 			constructPacket(ACK,expectedSeq, pPacket);
 			sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen);
 		}
@@ -308,8 +309,9 @@ void receiveData(string sFilename) {
 			if( recvPollVal == -1 ) {
 				cerr << "Error polling socket..." << endl;
 			} else if( recvPollVal == 0 ) { //We timed out right here
-				cerr << "Timeout... Lost ACK" << endl;
+				//cerr << "Timeout... Lost ACK" << endl;
 				//resend previous ack/nak
+				cout << "Timeout Occuring..." << endl;
 				while(sendto(fd, pPacket, BUFSIZE, 0, (struct sockaddr *)&remaddr, addrlen) == -1);
 			} else {
 				recvlen = recvfrom(fd, buf, BUFSIZE, 0, (struct sockaddr *)&remaddr, &addrlen);
@@ -322,4 +324,5 @@ void receiveData(string sFilename) {
 
 	outFile.close();
 	expectedSeq = 0;
+	seqnum = 0;
 }
