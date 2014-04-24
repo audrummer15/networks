@@ -59,8 +59,6 @@ int fd;                         		/* our socket */
 unsigned char buf[BUFSIZE];    		/* receive buffer */
 uint8_t seqnum;
 char data[BUFSIZE - HEADERSIZE];
-uint8_t lastACK = 0;
-uint8_t sequenceNum = 0;
 uint8_t nextSequenceNum = 1;
 long lTotalSegments = 0;
 long lBase = 1;
@@ -153,7 +151,7 @@ int main(int argc, char *argv[])
 			}
 			cout << endl;
 
-			string command(data);
+			string command(pPacket->Data); //AMB
 
 			if ( notcorrupt(pPacket) ) {
 				if ( command.substr(0,3) == "GET" || command.substr(0,3) == "get" ) {
@@ -173,12 +171,12 @@ int main(int argc, char *argv[])
 					sendFile(command.substr(4, command.length()).c_str());
 					cout << "GET successfully completed" << endl;
 				} else {
-					cout << "Not a GET command - NAK\n";
+					//cout << "Not a GET command - NAK (" << command.substr(0,3) << ")\n";
 					//nak[1] = (char)pPacket->Sequence ^ 30;
 					//sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
 				}
 			} else {
-				cout << "landed invalid" << endl;
+				//cout << "landed invalid" << endl;
 				//cout << "Checksum invalid - NAK >> " << command << "\n";
 				//nak[1] = seqnum;
 				//sendto(fd, nak, 2, 0, (struct sockaddr *)&remaddr, addrlen);
@@ -228,18 +226,27 @@ void *sendPacket(void *args) {
 
 	//Call the gremlin function
 	Packet * tbSent = (Packet *)args;
-	cout << "Sent Packet Number: " << (int)tbSent->Sequence << endl;
+	//cout << "Sent Packet Number: " << (int)tbSent->Sequence << endl;
 	int gremlinReturn = gremlin(fDamaged, fLost, fDelayed, tbSent);
 	if(gremlinReturn == LOST_PACKET)
 	{
 	}
 	else if(gremlinReturn == DELAYED_PACKET)
 	{
+		cout << "Delaying - (" << (int)tbSent->Sequence << ")" << endl;
 		usleep(1000 * lDelay);
+		cout << "Done Delaying - (" << (int)tbSent->Sequence << ")" << endl;
 		while(sendto(fd, tbSent, BUFSIZE, 0, (struct sockaddr*)&remaddr, addrlen) == -1)
 		{	
 			cerr << "Problem sending packet with sequence #" << tbSent->Sequence << "..." << endl; //Keep trying to send
 		}
+
+		cout << "Sent: (" << (int)tbSent->Sequence << "): ";
+
+		for( int i=0; i<48; i++ ) 
+			cout << tbSent->Data[i];
+
+		cout << endl;
 	}
 	else
 	{
@@ -247,6 +254,13 @@ void *sendPacket(void *args) {
 		{	
 			cerr << "Problem sending packet with sequence #" << tbSent->Sequence << "..." << endl; //Keep trying to send
 		}
+
+		cout << "Sent: (" << (int)tbSent->Sequence << "): ";
+
+		for( int i=0; i<48; i++ ) 
+			cout << tbSent->Data[i];
+
+		cout << endl;
 	}
 
 }
@@ -316,11 +330,11 @@ void sendFile(const char* getFile) {
 		
 		lBase = 1;		
 		nextSequenceNum = 1;
-		cout << "lTotalSeg: " << (int)lTotalSegments << endl;
+		//cout << "lTotalSeg: " << (int)lTotalSegments << endl;
 		for(int k=0; k < min(WINDOWSIZE, lTotalSegments); k++) {
 			memcpy(pTemps[k], pPackets[k], sizeof( Packet ));
 			gettimeofday(&sendTime[k], NULL); //Gets the current time
-			cout << "Sent a packet..." << (int)pTemps[k]->Sequence << endl;
+			//cout << "Sent a packet..." << (int)pTemps[k]->Sequence << endl;
 			pthread_create(&sendThread[k], NULL, sendPacket, pTemps[k]);
 		}
 Packet *pTemp = new Packet;
@@ -341,16 +355,15 @@ Packet *pTemp = new Packet;
 			if( recvPollVal == -1 ) {
 				cerr << "Error polling socket..." << endl;
 			} else if( recvPollVal == 0 ) { //We timed out right here
-				cerr << "Timeout... Lost Packet, Sequence Number - " << lBase << endl;
+				//cerr << "Timeout... Lost Packet, Sequence Number - " << lBase << endl;
 				
 				//Send everything again
 				for(int k = lBase - 1; k < min(lBase + WINDOWSIZE, lTotalSegments); k++) {
 					memcpy(pTemps[k], pPackets[k], sizeof( Packet ));
 					gettimeofday(&sendTime[k % SEQMODULO], NULL); //Gets the current time
 			
+					cout << "Timeout On Packet " << (int)pPackets[k]->Sequence << endl;
 					pthread_create(&sendThread[k % SEQMODULO], NULL, sendPacket, pTemps[k]);
-			
-					cout << "Resent a packet..." << (int)pPackets[k]->Sequence << endl;
 				}
 				
 			} else {
@@ -361,7 +374,7 @@ Packet *pTemp = new Packet;
 				if( pTemp->Ack == ACK ) {
 					if((pTemp->Sequence == lBase % SEQMODULO)) {
 						ackCount++;
-						cout << "Inside ACK. Got SN: " << (int)pTemp->Sequence << "   lBase = " << (int)lBase << endl;
+						cout << "ACK - " << (int)pTemp->Sequence << endl;
 						if(lBase + WINDOWSIZE < lTotalSegments) {
 							memcpy(pTemps[lBase + WINDOWSIZE - 1], pPackets[lBase + WINDOWSIZE - 1], sizeof( Packet ));
 							gettimeofday(&sendTime[(lBase + WINDOWSIZE - 1) % SEQMODULO], NULL); //Gets the current time
@@ -371,16 +384,15 @@ Packet *pTemp = new Packet;
 						lBase++;
 					}
 				} else {
-					
+
 					//NAK, Send everything again
 					if((pTemp->Sequence == lBase % SEQMODULO)) {
 						for(int k = lBase - 1; k < min(lBase + WINDOWSIZE, lTotalSegments); k++) {
 							memcpy(pTemps[k], pPackets[k], sizeof( Packet ));
 							gettimeofday(&sendTime[k % SEQMODULO], NULL); //Gets the current time
-			
+
+							cout << "NAK - " << (int)pTemp->Sequence << endl;
 							pthread_create(&sendThread[k % SEQMODULO], NULL, sendPacket, pTemps[k]);
-			
-							cout << "NAK Resent a packet..." << (int)pPackets[k]->Sequence << endl;
 						}
 					}
 
@@ -399,11 +411,19 @@ Packet *pTemp = new Packet;
 		cout << "Could not open file name.\n";
 	}
 
+	for(int i=0; i < SEQMODULO; i++) {
+		if( sendThread[i] != NULL ) {
+			pthread_join(sendThread[i], NULL);
+		}
+	}
+
 	sendto(fd, "\0", 1, 0, (struct sockaddr*)&remaddr, addrlen);
 
 	cout << "Sending Complete!\n";
 
-	sequenceNum = 0;
+	lBase = 1;
+	nextSequenceNum = 1;
+	lTotalSegments = 0;
 
 	//Free up memory
 	for(int i=0; i < lTotalSegments; i++) {
